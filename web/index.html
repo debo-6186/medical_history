@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>Medical History Assistant</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- PIN gate -->
+  <section id="pin-screen" class="screen">
+    <div class="pin-box">
+      <h1>Medical History</h1>
+      <p class="muted">Enter your PIN to continue.</p>
+      <input id="pin-input" type="password" inputmode="numeric"
+             autocomplete="off" placeholder="PIN">
+      <button id="pin-btn">Unlock</button>
+      <p id="pin-error" class="error" hidden></p>
+    </div>
+  </section>
+
+  <!-- Chat -->
+  <section id="chat-screen" class="screen" hidden>
+    <header class="topbar">
+      <span class="title">Medical History</span>
+      <button id="logout-btn" class="link-btn">Lock</button>
+    </header>
+
+    <div id="health-banner" class="banner" hidden>
+      Backend can't reach Ollama — analysis and chat will fail until it's running.
+    </div>
+
+    <div id="messages" class="messages"></div>
+
+    <div class="composer">
+      <div id="file-list" class="file-list" hidden></div>
+
+      <div class="composer-row">
+        <button id="attach-btn" class="icon-btn" title="Attach files">📎</button>
+        <button id="mic-btn" class="icon-btn" title="Record voice note">🎤</button>
+        <input id="file-input" type="file"
+               accept="application/pdf,image/*" multiple hidden>
+        <textarea id="text-input" rows="1"
+                  placeholder="Ask a question…"></textarea>
+        <button id="send-btn" class="send-btn" title="Send">➤</button>
+      </div>
+
+      <div class="intent-toggle" id="intent-toggle">
+        <button data-intent="ask" class="active">Ask</button>
+        <button data-intent="record">Add to record</button>
+      </div>
+    </div>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>
