@@ -461,11 +461,10 @@ async function transcribeBlob(blob) {
     }
     // Drop the transcript into the composer for review — appended if the box
     // already holds text. Nothing is saved until the user taps send.
+    // The current intent (Ask vs Add to record) is preserved so voice works
+    // for questions as well as new records.
     const existing = textInput.value.trim();
     textInput.value = existing ? existing + ' ' + text : text;
-    // Voice notes are medical history: switch the toggle so the user only has
-    // to review and send. The toggle stays visible — this is not hidden.
-    setIntent('record');
     autoGrow();
     textInput.focus();
   } catch (e) {
