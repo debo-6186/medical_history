@@ -1,18 +1,19 @@
-"""Vector store: embeddings, ChromaDB access, ingestion, listing.
+"""Embeddings, ingestion, document listing — backed by the ObjectBox store.
 
 Refactored from rag_store.py, extended with raw-text ingestion, document
 listing, and deletion. Every chunk carries doc_id / doc_type / created_at
-metadata so the web app can list and manage documents.
+metadata so the web app can list and manage documents. The actual vector store
+lives in core.vector_store (ObjectBox); this module handles chunking and embeds.
 """
 import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-import chromadb
 import ollama
 
-from core.config import COLLECTION_NAME, DB_PATH, EMBED_MODEL, SOURCE_FILES_DIR
+from core import vector_store
+from core.config import EMBED_MODEL, SOURCE_FILES_DIR
 
 _H2_RE = re.compile(r'^##\s+(.+?)\s*$')
 # A '### ' sub-heading or a whole-line **bold** label (e.g. a parameter group).
@@ -29,8 +30,6 @@ _NOMIC_EMBED = 'nomic' in EMBED_MODEL.lower()
 # The analysis prompt emits a leading `DOCUMENT_DATE: YYYY-MM-DD` line.
 _DOC_DATE_RE = re.compile(r'DOCUMENT_DATE:\s*(\d{4}-\d{2}-\d{2})', re.IGNORECASE)
 _DOC_DATE_LINE_RE = re.compile(r'(?im)^.*DOCUMENT_DATE:.*$\n?')
-
-_collection = None  # cached; one PersistentClient per process
 
 
 def _now() -> str:
@@ -50,14 +49,6 @@ def embed_text(text: str, *, kind: str = 'document') -> list[float]:
         prefix = 'search_query: ' if kind == 'query' else 'search_document: '
         text = prefix + text
     return ollama.embeddings(model=EMBED_MODEL, prompt=text)['embedding']
-
-
-def get_collection():
-    global _collection
-    if _collection is None:
-        client = chromadb.PersistentClient(path=DB_PATH)
-        _collection = client.get_or_create_collection(COLLECTION_NAME)
-    return _collection
 
 
 def store_source_file(path: Path) -> str:
@@ -192,29 +183,20 @@ def _upsert_chunks(
     if not chunks:
         return 0
     created = _now()
-    ids, documents, embeddings, metadatas = [], [], [], []
+    items = []
     for i, chunk in enumerate(chunks):
-        ids.append(f'{doc_id}::section_{i:02d}')
-        documents.append(chunk['text'])
-        embeddings.append(embed_text(chunk['text']))
-        metadatas.append({
-            'doc_id': doc_id,
+        items.append({
+            'chunk_id': f'{doc_id}::section_{i:02d}',
             'filename': filename,
             'doc_type': doc_type,
             'section_title': chunk['title'],
             'file_path': file_path,
             'created_at': created,
             'doc_date': doc_date,
+            'text': chunk['text'],
+            'embedding': embed_text(chunk['text']),
         })
-    collection = get_collection()
-    collection.delete(where={'doc_id': doc_id})  # drop stale chunks for this doc
-    collection.upsert(
-        ids=ids,
-        documents=documents,
-        embeddings=embeddings,
-        metadatas=metadatas,
-    )
-    return len(ids)
+    return vector_store.replace_doc(doc_id, items)  # replaces stale chunks
 
 
 def _extract_doc_date(analysis: str) -> tuple[int, str, str]:
@@ -279,10 +261,8 @@ def ingest_raw_text(
 
 def list_documents() -> list[dict]:
     """Return one entry per ingested document, newest first."""
-    collection = get_collection()
-    data = collection.get(include=['metadatas'])
     docs: dict[str, dict] = {}
-    for meta in data['metadatas']:
+    for _chunk_id, _text, meta in vector_store.all_chunks():
         doc_id = meta.get('doc_id') or meta.get('filename') or 'unknown'
         if doc_id not in docs:
             docs[doc_id] = {
@@ -299,16 +279,9 @@ def list_documents() -> list[dict]:
 
 def delete_document(doc_id: str) -> bool:
     """Delete a document's chunks and its stored source file."""
-    collection = get_collection()
-    data = collection.get(where={'doc_id': doc_id}, include=['metadatas'])
-    if not data['ids']:
+    removed, file_path = vector_store.delete_doc(doc_id)
+    if not removed:
         return False
-    file_path = ''
-    for meta in data['metadatas']:
-        if meta.get('file_path'):
-            file_path = meta['file_path']
-            break
-    collection.delete(where={'doc_id': doc_id})
     if file_path:
         try:
             Path(file_path).unlink(missing_ok=True)

@@ -15,6 +15,9 @@ OLLAMA_HOST = os.getenv('OLLAMA_HOST', 'http://127.0.0.1:11434')
 CHAT_MODEL = os.getenv('CHAT_MODEL', 'gemma4:26b')
 OCR_MODEL = os.getenv('OCR_MODEL', 'qwen3-vl:8b')
 EMBED_MODEL = os.getenv('EMBED_MODEL', 'nomic-embed-text')
+# nomic-embed-text is 768-dimensional. The ObjectBox HNSW index is
+# fixed-dimension, so this must match the embedding model and the Android entity.
+EMBED_DIM = int(os.getenv('EMBED_DIM', '768'))
 
 # The ollama client library reads OLLAMA_HOST from the environment; make sure
 # it is set even when only CHAT_MODEL/etc. were provided via .env.
@@ -45,8 +48,15 @@ WHISPER_COMPUTE_TYPE = os.getenv('WHISPER_COMPUTE_TYPE', 'int8')
 
 # --- Storage ---------------------------------------------------------------
 DB_PATH = os.getenv('DB_PATH', './rag_db')
-COLLECTION_NAME = 'medical_records'
 SOURCE_FILES_DIR = Path(DB_PATH) / 'source_files'
+
+# --- Vector store (ObjectBox) ----------------------------------------------
+# The vector store lives in its own directory (data.mdb) so the whole store can
+# be copied to Android and opened by the native ObjectBox binding. The distance
+# type is baked into the HNSW index and must match the Android entity. Cosine
+# suits nomic-embed-text. See docs/objectbox_android_schema.md.
+OBJECTBOX_DIR = str(Path(DB_PATH) / 'objectbox')
+VECTOR_DISTANCE = os.getenv('VECTOR_DISTANCE', 'cosine')
 
 # --- Retrieval / chat ------------------------------------------------------
 # Chunks are now fine-grained (a few bullets each), so more are fetched to

@@ -1,0 +1,79 @@
+{
+  "_note1": "KEEP THIS FILE! Check it into a version control system (VCS) like git.",
+  "_note2": "ObjectBox manages crucial IDs for your object model. See docs for details.",
+  "_note3": "If you have VCS merge conflicts, you must resolve them according to ObjectBox docs.",
+  "modelVersionParserMinimum": 5,
+  "entities": [
+    {
+      "id": "1:8180412255546006133",
+      "name": "Chunk",
+      "lastPropertyId": "11:7348256251734504351",
+      "properties": [
+        {
+          "id": "1:145379450408312710",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:7978884552925462831",
+          "name": "chunk_id",
+          "type": 9,
+          "flags": 8,
+          "indexId": "1:4386172363289241671"
+        },
+        {
+          "id": "3:4362714497916274075",
+          "name": "doc_id",
+          "type": 9,
+          "flags": 8,
+          "indexId": "2:3823358004560553702"
+        },
+        {
+          "id": "4:3694370188751249120",
+          "name": "filename",
+          "type": 9
+        },
+        {
+          "id": "5:4000628372617841624",
+          "name": "doc_type",
+          "type": 9
+        },
+        {
+          "id": "6:8275708962729822189",
+          "name": "section_title",
+          "type": 9
+        },
+        {
+          "id": "7:4609217207295871502",
+          "name": "file_path",
+          "type": 9
+        },
+        {
+          "id": "8:2284204301177228913",
+          "name": "created_at",
+          "type": 9
+        },
+        {
+          "id": "9:626827078902818993",
+          "name": "doc_date",
+          "type": 6
+        },
+        {
+          "id": "10:7956447551177657371",
+          "name": "text",
+          "type": 9
+        },
+        {
+          "id": "11:7348256251734504351",
+          "name": "embedding",
+          "type": 28,
+          "flags": 8,
+          "indexId": "3:7515450987388752488"
+        }
+      ]
+    }
+  ],
+  "lastEntityId": "1:8180412255546006133",
+  "lastIndexId": "3:7515450987388752488"
+}

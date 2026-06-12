@@ -24,7 +24,8 @@ from core.config import (
     MODEL_THINKING,
     TOP_K,
 )
-from core.rag import embed_text, get_collection
+from core import vector_store
+from core.rag import embed_text
 
 SYSTEM_PROMPT = (
     'You are a medical records assistant. You answer questions about the user\'s '
@@ -189,42 +190,31 @@ def expand_query(query: str) -> tuple[str, list[str], bool, tuple[int, int] | No
 
 
 # --- Retrieval -------------------------------------------------------------
+# Filters are two plain params threaded through to the vector store:
+# `exclude_prescriptions` (value questions) and `date_range` ('… for May 2026').
 
-def _build_where(
-    is_value_query: bool,
+
+def _vector_hits(
+    vector_text: str,
+    k: int,
+    exclude_prescriptions: bool,
     date_range: tuple[int, int] | None,
-) -> dict | None:
-    """Build the ChromaDB metadata filter for a query.
-
-    Combines the prescription exclusion (value questions) and the document
-    date range ('… for May 2026') into a single `where` clause.
-    """
-    conds: list[dict] = []
-    if is_value_query:
-        conds.append({'doc_type': {'$ne': 'prescription'}})
-    if date_range:
-        start, end = date_range
-        conds.append({'doc_date': {'$gte': start}})
-        conds.append({'doc_date': {'$lte': end}})
-    if not conds:
-        return None
-    return conds[0] if len(conds) == 1 else {'$and': conds}
-
-
-def _vector_hits(collection, vector_text: str, k: int, where: dict | None) -> list[tuple]:
+) -> list[tuple]:
     """Semantic search; returns [(chunk_id, document, metadata, distance), ...]."""
-    res = collection.query(
-        query_embeddings=[embed_text(vector_text, kind='query')],
-        n_results=k,
-        where=where,
+    return vector_store.vector_search(
+        embed_text(vector_text, kind='query'),
+        k,
+        exclude_prescriptions=exclude_prescriptions,
+        date_range=date_range,
     )
-    return list(zip(
-        res['ids'][0], res['documents'][0],
-        res['metadatas'][0], res['distances'][0],
-    ))
 
 
-def _keyword_hits(collection, keywords: list[str], k: int, where: dict | None) -> list[tuple]:
+def _keyword_hits(
+    keywords: list[str],
+    k: int,
+    exclude_prescriptions: bool,
+    date_range: tuple[int, int] | None,
+) -> list[tuple]:
     """Literal search: score every chunk by how many keywords it contains.
 
     Returns [(chunk_id, document, metadata), ...]. The store is one person's
@@ -233,9 +223,10 @@ def _keyword_hits(collection, keywords: list[str], k: int, where: dict | None) -
     """
     if not keywords:
         return []
-    data = collection.get(include=['documents', 'metadatas'], where=where)
     scored: list[tuple] = []
-    for cid, doc, meta in zip(data['ids'], data['documents'], data['metadatas']):
+    for cid, doc, meta in vector_store.all_chunks(
+        exclude_prescriptions=exclude_prescriptions, date_range=date_range,
+    ):
         haystack = f"{doc}\n{meta.get('section_title', '')}".lower()
         score = sum(1 for kw in keywords if kw in haystack)
         if score:
@@ -276,12 +267,10 @@ def retrieve(
     keeps only chunks whose document date falls inside it (a chunk with an
     unknown date is excluded — "for May 2026" means only May 2026).
     """
-    collection = get_collection()
-    if collection.count() == 0:
+    if vector_store.count() == 0:
         return []
-    where = _build_where(is_value_query, date_range)
-    vec_hits = _vector_hits(collection, vector_text, k, where)
-    kw_hits = _keyword_hits(collection, keywords, k, where)
+    vec_hits = _vector_hits(vector_text, k, is_value_query, date_range)
+    kw_hits = _keyword_hits(keywords, k, is_value_query, date_range)
     return _fuse(vec_hits, kw_hits, k)
 
 
