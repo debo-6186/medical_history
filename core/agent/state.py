@@ -29,3 +29,7 @@ class AgentState(TypedDict, total=False):
     messages: list[dict]
     sources: list[dict]
     user_msg: str
+
+    # Scheduling branch: the drafted pending reminder, surfaced to the client as
+    # a `proposal` SSE event for the user to review and confirm.
+    proposal: dict

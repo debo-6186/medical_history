@@ -22,6 +22,7 @@ _STEP_LABELS = {
     'assemble_records': 'answering',
     'general': 'answering',
     'mixed': 'answering',
+    'scheduling': 'scheduling',
 }
 
 
@@ -33,12 +34,14 @@ def build_graph():
     g.add_node('assemble_records', nodes.assemble_records_node)
     g.add_node('general', nodes.general_node)
     g.add_node('mixed', nodes.mixed_node)
+    g.add_node('scheduling', nodes.scheduling_node)
 
     g.add_edge(START, 'router')
     g.add_conditional_edges('router', nodes.route_by_intent, {
         'records': 'records_retrieve',
         'general': 'general',
         'mixed': 'mixed',
+        'schedule': 'scheduling',
     })
     g.add_conditional_edges('records_retrieve', nodes.grade_hits, {
         'reformulate': 'reformulate',
@@ -48,6 +51,7 @@ def build_graph():
     g.add_edge('assemble_records', END)
     g.add_edge('general', END)
     g.add_edge('mixed', END)
+    g.add_edge('scheduling', END)
     return g.compile()
 
 
