@@ -33,13 +33,8 @@ from core.config import (
     MAX_UPLOAD_MB,
     SOURCE_FILES_DIR,
 )
-from core.qa import (
-    build_messages,
-    expand_query,
-    retrieve,
-    sources_from_hits,
-    stream_answer,
-)
+from core.agent import run_turn
+from core.qa import stream_answer
 from core.rag import delete_document, ingest_raw_text, list_documents
 from core.transcribe import transcribe
 
@@ -203,19 +198,41 @@ async def chat(req: ChatRequest, _token: str = Depends(require_auth)) -> Streami
                     await asyncio.sleep(0.1)
             log.info('chat: model lock acquired')
 
-            # Query expansion calls the chat model, so it must run inside the
-            # lock. Retrieval (embeddings + a keyword scan) is light and simply
-            # shares the lock span rather than juggling the lock twice.
-            vector_text, keywords, is_value_query, date_range = (
-                await asyncio.to_thread(expand_query, req.message))
-            hits = await asyncio.to_thread(
-                retrieve, vector_text, keywords, is_value_query, date_range)
+            # The agent graph (router -> records/general/mixed, with a bounded
+            # retry cycle) makes blocking model calls, so it runs in a worker
+            # thread under the same lock. It is a synchronous generator of
+            # ('status', ...) progress events followed by one ('result', state);
+            # surface each step to the client and capture the final state.
+            agen = run_turn(req.message, history)
+            agen_sentinel = object()
+
+            def _next_event():
+                try:
+                    return next(agen)
+                except StopIteration:
+                    return agen_sentinel
+
+            state: dict | None = None
+            while True:
+                event = await asyncio.to_thread(_next_event)
+                if event is agen_sentinel:
+                    break
+                kind, payload = event
+                if kind == 'status':
+                    yield _sse('status', payload)
+                elif kind == 'result':
+                    state = payload
+            if state is None:
+                raise RuntimeError('agent produced no result')
+
+            messages = state['messages']
+            user_msg = state['user_msg']
+            sources = state.get('sources', [])
             log.info(
-                'chat: retrieved %d chunk(s) [value_query=%s dates=%s]: %s',
-                len(hits), is_value_query, date_range,
-                [meta.get('section_title', '?') for _doc, meta, _dist in hits],
+                'chat: intent=%s attempts=%s sources=%d',
+                state.get('intent'), state.get('retrieval_attempts'),
+                len(sources),
             )
-            messages, user_msg = build_messages(req.message, hits, history)
 
             log.info('chat: generating with %s', CHAT_MODEL)
             answer_parts: list[str] = []
@@ -247,7 +264,7 @@ async def chat(req: ChatRequest, _token: str = Depends(require_auth)) -> Streami
                 })
                 return
 
-            yield _sse('sources', {'sources': sources_from_hits(hits)})
+            yield _sse('sources', {'sources': sources})
 
             conv = CONVERSATIONS.setdefault(conversation_id, [])
             conv.append({'role': 'user', 'content': user_msg})
