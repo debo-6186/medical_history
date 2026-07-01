@@ -880,30 +880,55 @@ function addMedRow() {
   const row = document.createElement('div');
   row.className = 'med-row';
 
+  // A custom dropdown (not <datalist>, whose popup can't be reliably styled and
+  // renders white-on-white on some platforms). We fully control its colors.
+  const nameWrap = document.createElement('div');
+  nameWrap.className = 'med-name-wrap';
   const name = document.createElement('input');
   name.className = 'med-name';
   name.placeholder = 'Medicine name';
-  name.setAttribute('list', 'med-dl-' + id);
   name.autocomplete = 'off';
+  const suggest = document.createElement('div');
+  suggest.className = 'med-suggest';
+  suggest.hidden = true;
+  nameWrap.append(name, suggest);
 
-  const dl = document.createElement('datalist');
-  dl.id = 'med-dl-' + id;
+  // Hide the list shortly after blur so a tap on an item still registers.
+  name.addEventListener('blur', () => setTimeout(() => { suggest.hidden = true; }, 150));
 
   // Live autocomplete from the offline index, filtered by the chosen country.
   name.addEventListener('input', debounce(async () => {
     const q = name.value.trim();
-    if (q.length < 2) return;
+    if (q.length < 2) { suggest.hidden = true; return; }
     try {
       const res = await api(`/api/medicines?q=${encodeURIComponent(q)}&region=${medRegion()}`);
       if (!res.ok) return;
       const list = (await res.json()).medicines || [];
-      dl.innerHTML = '';
+      suggest.innerHTML = '';
+      if (!list.length) { suggest.hidden = true; return; }
       list.forEach((m) => {
-        const opt = document.createElement('option');
-        opt.value = m.name;
-        if (m.generic) opt.label = m.generic;
-        dl.appendChild(opt);
+        const item = document.createElement('div');
+        item.className = 'med-suggest-item';
+        const nm = document.createElement('span');
+        nm.className = 'ms-name';
+        nm.textContent = m.name;
+        item.appendChild(nm);
+        if (m.generic) {
+          const g = document.createElement('span');
+          g.className = 'ms-generic';
+          g.textContent = m.generic;
+          item.appendChild(g);
+        }
+        // mousedown fires before the input's blur, so the value is set before
+        // the list hides.
+        item.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          name.value = m.name;
+          suggest.hidden = true;
+        });
+        suggest.appendChild(item);
       });
+      suggest.hidden = false;
     } catch { /* ignore autocomplete errors */ }
   }, 200));
 
@@ -929,7 +954,7 @@ function addMedRow() {
   remove.title = 'Remove';
   remove.onclick = () => row.remove();
 
-  row.append(name, dl, dosage, freq, tenure, remove);
+  row.append(nameWrap, dosage, freq, tenure, remove);
   rows.appendChild(row);
   return row;
 }

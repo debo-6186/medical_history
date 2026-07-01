@@ -249,8 +249,26 @@ html, body {
   grid-template-columns: 1fr auto;
   grid-template-areas: "name remove" "dosage dosage" "freq freq" "tenure tenure";
 }
-.med-name { grid-area: name; }
+.med-name-wrap { grid-area: name; position: relative; }
 .med-remove { grid-area: remove; align-self: center; }
+
+/* custom autocomplete dropdown (explicit colors — readable everywhere) */
+.med-suggest {
+  position: absolute; top: 100%; left: 0; right: 0; z-index: 30;
+  margin-top: 2px; max-height: 240px; overflow-y: auto;
+  background: var(--panel); color: var(--ink);
+  border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .14);
+}
+.med-suggest-item {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 8px 10px; cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.med-suggest-item:last-child { border-bottom: none; }
+.med-suggest-item:hover { background: var(--bg); }
+.ms-name { font-size: 14px; color: var(--ink); }
+.ms-generic { font-size: 12px; color: var(--muted); }
 .med-dosage { grid-area: dosage; }
 .med-freq { grid-area: freq; }
 .med-tenure { grid-area: tenure; }
