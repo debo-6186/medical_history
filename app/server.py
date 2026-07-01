@@ -37,6 +37,7 @@ from core.config import (
 from core import calendar as gcal
 from core import reminders as reminders_store
 from core.agent import run_turn
+from core.followups import create_pending_followups
 from core.qa import stream_answer
 from core.rag import delete_document, ingest_raw_text, list_documents
 from core.transcribe import transcribe
@@ -98,7 +99,19 @@ def history_route(
     dated_text = f"Medical history entry — {now.strftime('%Y-%m-%d')}\n\n{text}"
     chunks = ingest_raw_text(doc_id, 'Medical history', dated_text, 'history')
     log.info('history: stored %s (%d chunk(s))', doc_id, chunks)
-    return HistoryResponse(doc_id=doc_id, chunks=chunks)
+
+    # Scan the saved text for future follow-up actions and draft them as pending
+    # reminders. The model call must run under MODEL_LOCK; extraction failure
+    # must never fail the save itself.
+    drafted: list[dict] = []
+    with MODEL_LOCK:
+        try:
+            drafted = create_pending_followups(text)
+        except Exception:  # noqa: BLE001
+            log.exception('history: follow-up extraction failed')
+    if drafted:
+        log.info('history: drafted %d follow-up reminder(s)', len(drafted))
+    return HistoryResponse(doc_id=doc_id, chunks=chunks, reminders=drafted)
 
 
 @app.post('/api/transcribe')

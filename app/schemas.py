@@ -18,6 +18,9 @@ class HistoryRequest(BaseModel):
 class HistoryResponse(BaseModel):
     doc_id: str
     chunks: int
+    # Follow-up reminders auto-detected in the saved text, drafted as pending
+    # for the user to review/approve (nothing is sent to Google yet).
+    reminders: list[dict] = []
 
 
 class ChatRequest(BaseModel):
