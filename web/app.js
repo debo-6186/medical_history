@@ -358,6 +358,8 @@ async function pollJob(jobId, status) {
     status.textSpan.textContent = last;
     if (job.status === 'done') {
       status.el.className = 'msg bot';
+      // Always ask for medications after a prescription (never auto-read them).
+      if (job.doc_type === 'prescription') openMedCapture(job.doc_id);
       return;
     }
     if (job.status === 'error') {
@@ -854,6 +856,149 @@ function closeReminders() {
   if (panel) panel.hidden = true;
 }
 
+// --- medication capture ----------------------------------------------------
+
+let medDocId = null;
+let medRowSeq = 0;
+
+const FREQUENCIES = ['Once daily', 'Twice daily', 'Thrice daily', 'Weekly', 'As needed'];
+
+function debounce(fn, ms) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
+function medRegion() {
+  const sel = $('med-region');
+  return sel ? sel.value : 'IN';
+}
+
+function addMedRow() {
+  const rows = $('med-rows');
+  if (!rows) return;
+  const id = ++medRowSeq;
+  const row = document.createElement('div');
+  row.className = 'med-row';
+
+  const name = document.createElement('input');
+  name.className = 'med-name';
+  name.placeholder = 'Medicine name';
+  name.setAttribute('list', 'med-dl-' + id);
+  name.autocomplete = 'off';
+
+  const dl = document.createElement('datalist');
+  dl.id = 'med-dl-' + id;
+
+  // Live autocomplete from the offline index, filtered by the chosen country.
+  name.addEventListener('input', debounce(async () => {
+    const q = name.value.trim();
+    if (q.length < 2) return;
+    try {
+      const res = await api(`/api/medicines?q=${encodeURIComponent(q)}&region=${medRegion()}`);
+      if (!res.ok) return;
+      const list = (await res.json()).medicines || [];
+      dl.innerHTML = '';
+      list.forEach((m) => {
+        const opt = document.createElement('option');
+        opt.value = m.name;
+        if (m.generic) opt.label = m.generic;
+        dl.appendChild(opt);
+      });
+    } catch { /* ignore autocomplete errors */ }
+  }, 200));
+
+  const dosage = document.createElement('input');
+  dosage.className = 'med-dosage';
+  dosage.placeholder = 'Dosage (e.g. 500 mg)';
+
+  const freq = document.createElement('select');
+  freq.className = 'med-freq';
+  FREQUENCIES.forEach((f) => {
+    const o = document.createElement('option');
+    o.value = f; o.textContent = f;
+    freq.appendChild(o);
+  });
+
+  const tenure = document.createElement('input');
+  tenure.className = 'med-tenure';
+  tenure.placeholder = 'Duration (e.g. 7 days, ongoing)';
+
+  const remove = document.createElement('button');
+  remove.className = 'link-btn med-remove';
+  remove.textContent = '✕';
+  remove.title = 'Remove';
+  remove.onclick = () => row.remove();
+
+  row.append(name, dl, dosage, freq, tenure, remove);
+  rows.appendChild(row);
+  return row;
+}
+
+async function openMedCapture(docId) {
+  const panel = $('med-panel');
+  if (!panel) return;
+  medDocId = docId || null;
+  $('med-rows').innerHTML = '';
+  addMedRow();
+  const hint = $('med-index-hint');
+  hint.textContent = '';
+  try {
+    const st = await (await api('/api/medicines/status')).json();
+    if (st.default_region) $('med-region').value = st.default_region;
+    if (!st.available) {
+      hint.textContent = 'Name suggestions off (index not built) — type names manually.';
+    }
+  } catch { /* ignore */ }
+  panel.hidden = false;
+}
+
+function closeMedCapture() {
+  const panel = $('med-panel');
+  if (panel) panel.hidden = true;
+  medDocId = null;
+}
+
+async function saveMedications() {
+  const region = medRegion();
+  const meds = [];
+  $('med-rows').querySelectorAll('.med-row').forEach((row) => {
+    const name = row.querySelector('.med-name').value.trim();
+    if (!name) return;
+    meds.push({
+      name,
+      region,
+      dosage: row.querySelector('.med-dosage').value.trim(),
+      frequency: row.querySelector('.med-freq').value,
+      tenure: row.querySelector('.med-tenure').value.trim(),
+    });
+  });
+  if (!meds.length) { closeMedCapture(); return; }   // nothing entered = skip
+
+  const saveBtn = $('med-save');
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Saving…';
+  try {
+    const res = await api('/api/medications', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ doc_id: medDocId, medications: meds }),
+    });
+    if (!res.ok) throw new Error(await errText(res));
+    const n = (await res.json()).count || meds.length;
+    closeMedCapture();
+    updateReminderBadge();
+    const note = addMessage('bot reminder-note', '');
+    note.textSpan.textContent =
+      `🔔 ${n} medication reminder${n > 1 ? 's' : ''} drafted — ` +
+      'tap the bell to review and add to your calendar.';
+  } catch (e) {
+    alert('Could not save medications: ' + e.message);
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Save & set reminders';
+  }
+}
+
 // --- composer controls -----------------------------------------------------
 
 function autoGrow() {
@@ -1025,6 +1170,9 @@ logoutBtn.onclick = logout;
 sendBtn.onclick = onSend;
 $('reminders-btn').onclick = openReminders;
 $('reminders-close').onclick = closeReminders;
+$('med-add').onclick = addMedRow;
+$('med-save').onclick = saveMedications;
+$('med-skip').onclick = closeMedCapture;
 
 // --- init ------------------------------------------------------------------
 
