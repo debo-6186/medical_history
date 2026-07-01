@@ -36,6 +36,7 @@ function showChat() {
   pinScreen.hidden = true;
   chatScreen.hidden = false;
   checkHealth();
+  updateReminderBadge();
 }
 
 function showPin() {
@@ -193,8 +194,17 @@ async function sendHistory(text) {
       body: JSON.stringify({ text }),
     });
     if (!res.ok) throw new Error(await errText(res));
+    const data = await res.json().catch(() => ({}));
     status.el.className = 'msg bot';
     status.textSpan.textContent = 'Saved to your record.';
+    const drafted = (data.reminders || []).length;
+    if (drafted) {
+      updateReminderBadge();
+      const note = addMessage('bot reminder-note', '');
+      note.textSpan.textContent =
+        `🔔 ${drafted} follow-up reminder${drafted > 1 ? 's' : ''} detected — ` +
+        'tap the bell to review and add to your calendar.';
+    }
   } catch (e) {
     status.textSpan.textContent = 'Could not save: ' + e.message;
   } finally {
@@ -214,6 +224,7 @@ async function sendChat(text) {
   addMessage('user', text);
   const bubble = addMessage('bot', '');
   let answer = '';
+  let drafted = false;
   try {
     const res = await api('/api/chat', {
       method: 'POST',
@@ -251,6 +262,10 @@ async function sendChat(text) {
           scrollDown();
         } else if (evt.event === 'sources') {
           setSources(bubble.el, evt.data.sources);
+        } else if (evt.event === 'proposal') {
+          // A scheduling turn drafted a reminder — flag it for review.
+          drafted = true;
+          updateReminderBadge();
         } else if (evt.event === 'done') {
           conversationId = evt.data.conversation_id;
         } else if (evt.event === 'error') {
@@ -260,6 +275,11 @@ async function sendChat(text) {
     }
     if (answer) renderRich(bubble.textSpan, answer);
     else bubble.textSpan.textContent = '(no response)';
+    if (drafted) {
+      const note = addMessage('bot reminder-note', '');
+      note.textSpan.textContent =
+        '🔔 Reminder drafted — tap the bell to review and add it to your calendar.';
+    }
     scrollDown();
   } catch (e) {
     bubble.el.className = 'msg bot status';
@@ -670,6 +690,170 @@ function buildChartFigure(spec, points) {
   return fig;
 }
 
+// --- reminders -------------------------------------------------------------
+
+function browserTz() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; }
+  catch { return 'UTC'; }
+}
+
+function rruleText(rrule) {
+  if (!rrule) return 'One-off';
+  const freq = (/FREQ=([A-Z]+)/.exec(rrule) || [, 'recurring'])[1].toLowerCase();
+  const count = /COUNT=(\d+)/.exec(rrule);
+  return count ? `Repeats ${freq} ×${count[1]}` : `Repeats ${freq}`;
+}
+
+async function updateReminderBadge() {
+  const badge = $('reminders-badge');
+  if (!badge) return;
+  try {
+    const res = await api('/api/reminders?status=pending');
+    if (!res.ok) return;
+    const n = ((await res.json()).reminders || []).length;
+    badge.textContent = n;
+    badge.hidden = n === 0;
+  } catch { /* ignore badge errors */ }
+}
+
+async function loadGoogleStatus() {
+  const box = $('google-status');
+  if (!box) return;
+  box.innerHTML = '';
+  let data;
+  try { data = await (await api('/api/google/status')).json(); }
+  catch { return; }
+  if (data.authorized) {
+    box.innerHTML = '<span class="gs-ok">✓ Google Calendar connected</span>';
+    return;
+  }
+  if (!data.credentials_present) {
+    box.innerHTML =
+      'Google not set up — add <code>rag_db/google_credentials.json</code> ' +
+      'to enable calendar reminders. You can still review and dismiss drafts.';
+    return;
+  }
+  box.innerHTML = 'Google Calendar not connected. ';
+  const btn = document.createElement('button');
+  btn.className = 'mini-btn';
+  btn.textContent = 'Connect';
+  btn.onclick = async () => {
+    btn.disabled = true;
+    btn.textContent = 'Approve in the browser on the server…';
+    try {
+      const res = await api('/api/google/authorize', { method: 'POST' });
+      if (!res.ok) throw new Error(await errText(res));
+      loadGoogleStatus();
+    } catch (e) {
+      alert('Authorize failed: ' + e.message);
+      btn.disabled = false;
+      btn.textContent = 'Connect';
+    }
+  };
+  box.appendChild(btn);
+}
+
+async function loadReminders() {
+  const list = $('reminders-list');
+  if (!list) return;
+  list.textContent = 'Loading…';
+  let items;
+  try { items = ((await (await api('/api/reminders?status=pending')).json()).reminders) || []; }
+  catch { list.textContent = 'Could not load reminders.'; return; }
+  list.innerHTML = '';
+  if (!items.length) {
+    list.innerHTML = '<p class="muted">Nothing to review right now.</p>';
+    return;
+  }
+  items.forEach((r) => list.appendChild(reminderCard(r)));
+}
+
+function reminderCard(r) {
+  const card = document.createElement('div');
+  card.className = 'reminder-card';
+
+  const kind = document.createElement('span');
+  kind.className = 'reminder-kind ' + r.kind;
+  kind.textContent = r.kind;
+
+  const text = document.createElement('input');
+  text.className = 'reminder-text';
+  text.value = r.proposed_text || r.title || '';
+
+  const when = document.createElement('input');
+  when.type = 'datetime-local';
+  when.className = 'reminder-when';
+  when.value = (r.start || '').slice(0, 16);   // ISO -> datetime-local
+
+  const rep = document.createElement('span');
+  rep.className = 'reminder-rep';
+  rep.textContent = rruleText(r.rrule);
+
+  const actions = document.createElement('div');
+  actions.className = 'reminder-actions';
+
+  const removeIfEmpty = () => {
+    card.remove();
+    updateReminderBadge();
+    if (!$('reminders-list').children.length) loadReminders();
+  };
+
+  const approve = document.createElement('button');
+  approve.className = 'mini-btn primary';
+  approve.textContent = 'Approve';
+  approve.onclick = async () => {
+    if (!when.value) { alert('Set a date and time first.'); return; }
+    approve.disabled = true;
+    approve.textContent = 'Adding…';
+    const body = {
+      title: text.value.trim(),
+      proposed_text: text.value.trim(),
+      start: when.value.length === 16 ? when.value + ':00' : when.value,
+      timezone: browserTz(),
+    };
+    try {
+      const res = await api(`/api/reminders/${r.id}/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(await errText(res));
+      removeIfEmpty();
+    } catch (e) {
+      approve.disabled = false;
+      approve.textContent = 'Approve';
+      alert('Could not add to calendar: ' + e.message);
+    }
+  };
+
+  const dismiss = document.createElement('button');
+  dismiss.className = 'mini-btn';
+  dismiss.textContent = 'Dismiss';
+  dismiss.onclick = async () => {
+    try {
+      await api(`/api/reminders/${r.id}/dismiss`, { method: 'POST' });
+      removeIfEmpty();
+    } catch (e) { alert(e.message); }
+  };
+
+  actions.append(approve, dismiss);
+  card.append(kind, text, when, rep, actions);
+  return card;
+}
+
+function openReminders() {
+  const panel = $('reminders-panel');
+  if (!panel) return;
+  panel.hidden = false;
+  loadGoogleStatus();
+  loadReminders();
+}
+
+function closeReminders() {
+  const panel = $('reminders-panel');
+  if (panel) panel.hidden = true;
+}
+
 // --- composer controls -----------------------------------------------------
 
 function autoGrow() {
@@ -839,6 +1023,8 @@ pinInput.addEventListener('keydown', (e) => {
 });
 logoutBtn.onclick = logout;
 sendBtn.onclick = onSend;
+$('reminders-btn').onclick = openReminders;
+$('reminders-close').onclick = closeReminders;
 
 // --- init ------------------------------------------------------------------
 
