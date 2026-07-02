@@ -16,3 +16,6 @@ google_token.json
 
 # Local export of personal medical chunks (PII) — keep out of git
 chunks_export.json
+
+# Built offline medicine-name index (regenerate with scripts/build_medicine_index.py)
+medicines.db

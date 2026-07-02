@@ -40,6 +40,29 @@
       <div id="reminders-list" class="reminders-list"></div>
     </div>
 
+    <!-- Medication capture (opens after a prescription upload) -->
+    <div id="med-panel" class="panel" hidden>
+      <div class="panel-head">
+        <span class="panel-title">Add medications</span>
+        <button id="med-skip" class="link-btn">Skip</button>
+      </div>
+      <div class="med-controls">
+        <label>Country
+          <select id="med-region">
+            <option value="IN">India</option>
+            <option value="SG">Singapore</option>
+            <option value="US">United States</option>
+          </select>
+        </label>
+        <span id="med-index-hint" class="muted"></span>
+      </div>
+      <div id="med-rows" class="med-rows"></div>
+      <div class="med-foot">
+        <button id="med-add" class="mini-btn">+ Add another</button>
+        <button id="med-save" class="mini-btn primary">Save &amp; set reminders</button>
+      </div>
+    </div>
+
     <div id="health-banner" class="banner" hidden>
       Backend can't reach Ollama — analysis and chat will fail until it's running.
     </div>

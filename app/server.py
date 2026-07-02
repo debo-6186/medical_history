@@ -9,7 +9,7 @@ import logging
 import tempfile
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import ollama
@@ -25,6 +25,7 @@ from app.schemas import (
     HistoryResponse,
     LoginRequest,
     LoginResponse,
+    MedicationsRequest,
     ReminderConfirmRequest,
 )
 from core.analysis import SUPPORTED_EXTENSIONS
@@ -35,8 +36,11 @@ from core.config import (
     SOURCE_FILES_DIR,
 )
 from core import calendar as gcal
+from core import med_store
+from core import medicines
 from core import reminders as reminders_store
 from core.agent import run_turn
+from core.config import DEFAULT_MED_REGION, MED_REMINDER_HOUR
 from core.followups import create_pending_followups
 from core.qa import stream_answer
 from core.rag import delete_document, ingest_raw_text, list_documents
@@ -425,6 +429,85 @@ async def google_authorize(_token: str = Depends(require_auth)) -> dict:
         log.exception('google authorize failed')
         raise HTTPException(500, f'Authorization failed: {exc}')
     return {'authorized': True}
+
+
+# --- Medications -----------------------------------------------------------
+# Medications are NEVER auto-read from a prescription — the capture screen asks
+# for them after a prescription upload. Each saved medication drafts a pending
+# 'medication' reminder (only the first few chars of the name reach Google).
+
+def _freq_key(frequency: str) -> str | None:
+    """Map a capture-screen frequency to build_rrule's vocabulary."""
+    f = (frequency or '').strip().lower()
+    if f in ('', 'as needed', 'prn', 'once'):
+        return None
+    if 'week' in f:
+        return 'weekly'
+    if 'month' in f:
+        return 'monthly'
+    return 'daily'          # once/twice/thrice daily -> a daily series
+
+
+# Meal-timing -> reminder time-of-day. Missing/unknown falls back to the default.
+_MEAL_TIMES = {
+    'before breakfast': (7, 30), 'after breakfast': (8, 30),
+    'before lunch': (12, 30), 'after lunch': (13, 30),
+    'before dinner': (19, 30), 'after dinner': (20, 30),
+    'at bedtime': (22, 0),
+}
+
+
+def _timing_time(timing: str) -> tuple[int, int]:
+    return _MEAL_TIMES.get((timing or '').strip().lower(), (MED_REMINDER_HOUR, 0))
+
+
+@app.get('/api/medicines')
+def medicines_search(
+    q: str, region: str | None = None, _token: str = Depends(require_auth),
+) -> dict:
+    return {'medicines': medicines.search(q, region=region, limit=20)}
+
+
+@app.get('/api/medicines/status')
+def medicines_status(_token: str = Depends(require_auth)) -> dict:
+    return {'available': medicines.is_available(),
+            'default_region': DEFAULT_MED_REGION}
+
+
+@app.post('/api/medications')
+def save_medications(
+    req: MedicationsRequest, _token: str = Depends(require_auth),
+) -> dict:
+    created: list[dict] = []
+    for m in req.medications:
+        start_date = m.start_date or date.today().isoformat()
+        hh, mm = _timing_time(m.timing)
+        start = f'{start_date}T{hh:02d}:{mm:02d}:00'
+        count = med_store.tenure_to_count(m.tenure, m.frequency)
+        rrule = gcal.build_rrule(_freq_key(m.frequency), count)
+        # proposed_text is the human-friendly label shown in the approval panel;
+        # for a medication reminder it is NOT what gets sent to Google (the title
+        # — the bare name — is truncated to the privacy prefix instead).
+        detail = ', '.join(p for p in (m.dosage, m.frequency, m.tenure, m.timing)
+                           if p)
+        proposed = f'{m.name} — {detail}' if detail else m.name
+        reminder = reminders_store.add(
+            kind='medication', title=m.name, proposed_text=proposed,
+            start=start, rrule=rrule)
+        med_store.add(
+            name=m.name, generic=m.generic, region=m.region, dosage=m.dosage,
+            frequency=m.frequency, tenure=m.tenure, timing=m.timing,
+            start_date=start_date, source_doc_id=req.doc_id,
+            reminder_id=reminder['id'])
+        created.append(reminder)
+    log.info('medications: saved %d, drafted %d reminder(s)',
+             len(req.medications), len(created))
+    return {'reminders': created, 'count': len(created)}
+
+
+@app.get('/api/medications')
+def list_medications(_token: str = Depends(require_auth)) -> dict:
+    return {'medications': med_store.list_medications()}
 
 
 # --- Static frontend (mounted last so /api/* routes take precedence) -------

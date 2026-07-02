@@ -70,6 +70,19 @@ GOOGLE_CALENDAR_ID = os.getenv('GOOGLE_CALENDAR_ID', 'primary')
 # and manual reminders send the user-approved text as-is.
 MED_TITLE_PREFIX_LEN = int(os.getenv('MED_TITLE_PREFIX_LEN', '4'))
 
+# --- Medications -----------------------------------------------------------
+# Bundled, offline medicine-name index (built once by
+# scripts/build_medicine_index.py from the India / Singapore / US datasets).
+# Non-personal reference data, kept out of rag_db.
+MEDICINES_DB_PATH = os.getenv('MEDICINES_DB_PATH', './medicines.db')
+# Default region for the capture-screen autocomplete: IN | SG | US.
+DEFAULT_MED_REGION = os.getenv('DEFAULT_MED_REGION', 'IN')
+# Structured store of the medications the user is actually taking (personal —
+# lives under rag_db/ and is git-ignored).
+MED_STORE_DB_PATH = os.getenv('MED_STORE_DB_PATH', str(Path(DB_PATH) / 'medications.db'))
+# Default time-of-day for a medication reminder when the user doesn't set one.
+MED_REMINDER_HOUR = int(os.getenv('MED_REMINDER_HOUR', '8'))
+
 # --- Vector store (ObjectBox) ----------------------------------------------
 # The vector store lives in its own directory (data.mdb) so the whole store can
 # be copied to Android and opened by the native ObjectBox binding. The distance

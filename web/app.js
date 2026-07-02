@@ -358,6 +358,8 @@ async function pollJob(jobId, status) {
     status.textSpan.textContent = last;
     if (job.status === 'done') {
       status.el.className = 'msg bot';
+      // Always ask for medications after a prescription (never auto-read them).
+      if (job.doc_type === 'prescription') openMedCapture(job.doc_id);
       return;
     }
     if (job.status === 'error') {
@@ -776,10 +778,22 @@ function reminderCard(r) {
   kind.className = 'reminder-kind ' + r.kind;
   kind.textContent = r.kind;
 
+  // Auto-detected reminders can carry OCR/extraction errors, so make it clear
+  // both fields are editable before approving.
+  const hint = document.createElement('div');
+  hint.className = 'reminder-hint';
+  hint.textContent = 'Check and edit before approving:';
+
+  const textLabel = document.createElement('label');
+  textLabel.className = 'reminder-label';
+  textLabel.textContent = 'Reminder text';
   const text = document.createElement('input');
   text.className = 'reminder-text';
   text.value = r.proposed_text || r.title || '';
 
+  const whenLabel = document.createElement('label');
+  whenLabel.className = 'reminder-label';
+  whenLabel.textContent = 'Date & time';
   const when = document.createElement('input');
   when.type = 'datetime-local';
   when.className = 'reminder-when';
@@ -837,7 +851,7 @@ function reminderCard(r) {
   };
 
   actions.append(approve, dismiss);
-  card.append(kind, text, when, rep, actions);
+  card.append(kind, hint, textLabel, text, whenLabel, when, rep, actions);
   return card;
 }
 
@@ -852,6 +866,194 @@ function openReminders() {
 function closeReminders() {
   const panel = $('reminders-panel');
   if (panel) panel.hidden = true;
+}
+
+// --- medication capture ----------------------------------------------------
+
+let medDocId = null;
+let medRowSeq = 0;
+
+const FREQUENCIES = ['Once daily', 'Twice daily', 'Thrice daily', 'Weekly', 'As needed'];
+// [value sent to the server, label shown]. Value drives the reminder time-of-day.
+const MEAL_TIMINGS = [
+  ['', 'Any time'],
+  ['Before breakfast', 'Before breakfast'],
+  ['After breakfast', 'After breakfast'],
+  ['Before lunch', 'Before lunch'],
+  ['After lunch', 'After lunch'],
+  ['Before dinner', 'Before dinner'],
+  ['After dinner', 'After dinner'],
+  ['At bedtime', 'At bedtime'],
+];
+
+function debounce(fn, ms) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
+function medRegion() {
+  const sel = $('med-region');
+  return sel ? sel.value : 'IN';
+}
+
+function addMedRow() {
+  const rows = $('med-rows');
+  if (!rows) return;
+  const id = ++medRowSeq;
+  const row = document.createElement('div');
+  row.className = 'med-row';
+
+  // A custom dropdown (not <datalist>, whose popup can't be reliably styled and
+  // renders white-on-white on some platforms). We fully control its colors.
+  const nameWrap = document.createElement('div');
+  nameWrap.className = 'med-name-wrap';
+  const name = document.createElement('input');
+  name.className = 'med-name';
+  name.placeholder = 'Medicine name';
+  name.autocomplete = 'off';
+  const suggest = document.createElement('div');
+  suggest.className = 'med-suggest';
+  suggest.hidden = true;
+  nameWrap.append(name, suggest);
+
+  // Hide the list shortly after blur so a tap on an item still registers.
+  name.addEventListener('blur', () => setTimeout(() => { suggest.hidden = true; }, 150));
+
+  // Live autocomplete from the offline index, filtered by the chosen country.
+  name.addEventListener('input', debounce(async () => {
+    const q = name.value.trim();
+    if (q.length < 2) { suggest.hidden = true; return; }
+    try {
+      const res = await api(`/api/medicines?q=${encodeURIComponent(q)}&region=${medRegion()}`);
+      if (!res.ok) return;
+      const list = (await res.json()).medicines || [];
+      suggest.innerHTML = '';
+      if (!list.length) { suggest.hidden = true; return; }
+      list.forEach((m) => {
+        const item = document.createElement('div');
+        item.className = 'med-suggest-item';
+        const nm = document.createElement('span');
+        nm.className = 'ms-name';
+        nm.textContent = m.name;
+        item.appendChild(nm);
+        if (m.generic) {
+          const g = document.createElement('span');
+          g.className = 'ms-generic';
+          g.textContent = m.generic;
+          item.appendChild(g);
+        }
+        // mousedown fires before the input's blur, so the value is set before
+        // the list hides.
+        item.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          name.value = m.name;
+          suggest.hidden = true;
+        });
+        suggest.appendChild(item);
+      });
+      suggest.hidden = false;
+    } catch { /* ignore autocomplete errors */ }
+  }, 200));
+
+  const dosage = document.createElement('input');
+  dosage.className = 'med-dosage';
+  dosage.placeholder = 'Dosage (e.g. 500 mg)';
+
+  const freq = document.createElement('select');
+  freq.className = 'med-freq';
+  FREQUENCIES.forEach((f) => {
+    const o = document.createElement('option');
+    o.value = f; o.textContent = f;
+    freq.appendChild(o);
+  });
+
+  const timing = document.createElement('select');
+  timing.className = 'med-timing';
+  MEAL_TIMINGS.forEach(([value, label]) => {
+    const o = document.createElement('option');
+    o.value = value; o.textContent = label;
+    timing.appendChild(o);
+  });
+
+  const tenure = document.createElement('input');
+  tenure.className = 'med-tenure';
+  tenure.placeholder = 'Duration (e.g. 7 days, ongoing)';
+
+  const remove = document.createElement('button');
+  remove.className = 'link-btn med-remove';
+  remove.textContent = '✕';
+  remove.title = 'Remove';
+  remove.onclick = () => row.remove();
+
+  row.append(nameWrap, dosage, freq, timing, tenure, remove);
+  rows.appendChild(row);
+  return row;
+}
+
+async function openMedCapture(docId) {
+  const panel = $('med-panel');
+  if (!panel) return;
+  medDocId = docId || null;
+  $('med-rows').innerHTML = '';
+  addMedRow();
+  const hint = $('med-index-hint');
+  hint.textContent = '';
+  try {
+    const st = await (await api('/api/medicines/status')).json();
+    if (st.default_region) $('med-region').value = st.default_region;
+    if (!st.available) {
+      hint.textContent = 'Name suggestions off (index not built) — type names manually.';
+    }
+  } catch { /* ignore */ }
+  panel.hidden = false;
+}
+
+function closeMedCapture() {
+  const panel = $('med-panel');
+  if (panel) panel.hidden = true;
+  medDocId = null;
+}
+
+async function saveMedications() {
+  const region = medRegion();
+  const meds = [];
+  $('med-rows').querySelectorAll('.med-row').forEach((row) => {
+    const name = row.querySelector('.med-name').value.trim();
+    if (!name) return;
+    meds.push({
+      name,
+      region,
+      dosage: row.querySelector('.med-dosage').value.trim(),
+      frequency: row.querySelector('.med-freq').value,
+      timing: row.querySelector('.med-timing').value,
+      tenure: row.querySelector('.med-tenure').value.trim(),
+    });
+  });
+  if (!meds.length) { closeMedCapture(); return; }   // nothing entered = skip
+
+  const saveBtn = $('med-save');
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Saving…';
+  try {
+    const res = await api('/api/medications', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ doc_id: medDocId, medications: meds }),
+    });
+    if (!res.ok) throw new Error(await errText(res));
+    const n = (await res.json()).count || meds.length;
+    closeMedCapture();
+    updateReminderBadge();
+    const note = addMessage('bot reminder-note', '');
+    note.textSpan.textContent =
+      `🔔 ${n} medication reminder${n > 1 ? 's' : ''} drafted — ` +
+      'tap the bell to review and add to your calendar.';
+  } catch (e) {
+    alert('Could not save medications: ' + e.message);
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Save & set reminders';
+  }
 }
 
 // --- composer controls -----------------------------------------------------
@@ -1025,6 +1227,9 @@ logoutBtn.onclick = logout;
 sendBtn.onclick = onSend;
 $('reminders-btn').onclick = openReminders;
 $('reminders-close').onclick = closeReminders;
+$('med-add').onclick = addMedRow;
+$('med-save').onclick = saveMedications;
+$('med-skip').onclick = closeMedCapture;
 
 // --- init ------------------------------------------------------------------
 

@@ -28,6 +28,23 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = None
 
 
+class MedicationEntry(BaseModel):
+    name: str = Field(min_length=1)
+    generic: str = ''
+    region: str = ''
+    dosage: str = ''
+    frequency: str = ''
+    tenure: str = ''
+    timing: str = ''            # e.g. "After breakfast" — sets the reminder time
+    start_date: str | None = None
+
+
+class MedicationsRequest(BaseModel):
+    """Medications entered on the capture screen after a prescription upload."""
+    doc_id: str | None = None
+    medications: list[MedicationEntry]
+
+
 class ReminderConfirmRequest(BaseModel):
     """Edits the user may apply before a pending reminder is pushed to Google.
 
