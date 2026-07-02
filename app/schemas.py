@@ -35,6 +35,7 @@ class MedicationEntry(BaseModel):
     dosage: str = ''
     frequency: str = ''
     tenure: str = ''
+    timing: str = ''            # e.g. "After breakfast" — sets the reminder time
     start_date: str | None = None
 
 

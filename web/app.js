@@ -778,10 +778,22 @@ function reminderCard(r) {
   kind.className = 'reminder-kind ' + r.kind;
   kind.textContent = r.kind;
 
+  // Auto-detected reminders can carry OCR/extraction errors, so make it clear
+  // both fields are editable before approving.
+  const hint = document.createElement('div');
+  hint.className = 'reminder-hint';
+  hint.textContent = 'Check and edit before approving:';
+
+  const textLabel = document.createElement('label');
+  textLabel.className = 'reminder-label';
+  textLabel.textContent = 'Reminder text';
   const text = document.createElement('input');
   text.className = 'reminder-text';
   text.value = r.proposed_text || r.title || '';
 
+  const whenLabel = document.createElement('label');
+  whenLabel.className = 'reminder-label';
+  whenLabel.textContent = 'Date & time';
   const when = document.createElement('input');
   when.type = 'datetime-local';
   when.className = 'reminder-when';
@@ -839,7 +851,7 @@ function reminderCard(r) {
   };
 
   actions.append(approve, dismiss);
-  card.append(kind, text, when, rep, actions);
+  card.append(kind, hint, textLabel, text, whenLabel, when, rep, actions);
   return card;
 }
 
@@ -862,6 +874,17 @@ let medDocId = null;
 let medRowSeq = 0;
 
 const FREQUENCIES = ['Once daily', 'Twice daily', 'Thrice daily', 'Weekly', 'As needed'];
+// [value sent to the server, label shown]. Value drives the reminder time-of-day.
+const MEAL_TIMINGS = [
+  ['', 'Any time'],
+  ['Before breakfast', 'Before breakfast'],
+  ['After breakfast', 'After breakfast'],
+  ['Before lunch', 'Before lunch'],
+  ['After lunch', 'After lunch'],
+  ['Before dinner', 'Before dinner'],
+  ['After dinner', 'After dinner'],
+  ['At bedtime', 'At bedtime'],
+];
 
 function debounce(fn, ms) {
   let t;
@@ -944,6 +967,14 @@ function addMedRow() {
     freq.appendChild(o);
   });
 
+  const timing = document.createElement('select');
+  timing.className = 'med-timing';
+  MEAL_TIMINGS.forEach(([value, label]) => {
+    const o = document.createElement('option');
+    o.value = value; o.textContent = label;
+    timing.appendChild(o);
+  });
+
   const tenure = document.createElement('input');
   tenure.className = 'med-tenure';
   tenure.placeholder = 'Duration (e.g. 7 days, ongoing)';
@@ -954,7 +985,7 @@ function addMedRow() {
   remove.title = 'Remove';
   remove.onclick = () => row.remove();
 
-  row.append(nameWrap, dosage, freq, tenure, remove);
+  row.append(nameWrap, dosage, freq, timing, tenure, remove);
   rows.appendChild(row);
   return row;
 }
@@ -994,6 +1025,7 @@ async function saveMedications() {
       region,
       dosage: row.querySelector('.med-dosage').value.trim(),
       frequency: row.querySelector('.med-freq').value,
+      timing: row.querySelector('.med-timing').value,
       tenure: row.querySelector('.med-tenure').value.trim(),
     });
   });

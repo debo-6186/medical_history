@@ -22,6 +22,12 @@ def test_add_and_list():
     assert listed[0]['name'] == 'Metformin'
 
 
+def test_timing_persisted():
+    r = med_store.add('Metformin', timing='After breakfast')
+    assert r['timing'] == 'After breakfast'
+    assert med_store.list_medications()[0]['timing'] == 'After breakfast'
+
+
 def test_tenure_days():
     assert med_store.tenure_to_count('7 days', 'once daily') == 7
 

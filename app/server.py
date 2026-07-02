@@ -448,6 +448,19 @@ def _freq_key(frequency: str) -> str | None:
     return 'daily'          # once/twice/thrice daily -> a daily series
 
 
+# Meal-timing -> reminder time-of-day. Missing/unknown falls back to the default.
+_MEAL_TIMES = {
+    'before breakfast': (7, 30), 'after breakfast': (8, 30),
+    'before lunch': (12, 30), 'after lunch': (13, 30),
+    'before dinner': (19, 30), 'after dinner': (20, 30),
+    'at bedtime': (22, 0),
+}
+
+
+def _timing_time(timing: str) -> tuple[int, int]:
+    return _MEAL_TIMES.get((timing or '').strip().lower(), (MED_REMINDER_HOUR, 0))
+
+
 @app.get('/api/medicines')
 def medicines_search(
     q: str, region: str | None = None, _token: str = Depends(require_auth),
@@ -468,21 +481,24 @@ def save_medications(
     created: list[dict] = []
     for m in req.medications:
         start_date = m.start_date or date.today().isoformat()
-        start = f'{start_date}T{MED_REMINDER_HOUR:02d}:00:00'
+        hh, mm = _timing_time(m.timing)
+        start = f'{start_date}T{hh:02d}:{mm:02d}:00'
         count = med_store.tenure_to_count(m.tenure, m.frequency)
         rrule = gcal.build_rrule(_freq_key(m.frequency), count)
         # proposed_text is the human-friendly label shown in the approval panel;
         # for a medication reminder it is NOT what gets sent to Google (the title
         # — the bare name — is truncated to the privacy prefix instead).
-        detail = ', '.join(p for p in (m.dosage, m.frequency, m.tenure) if p)
+        detail = ', '.join(p for p in (m.dosage, m.frequency, m.tenure, m.timing)
+                           if p)
         proposed = f'{m.name} — {detail}' if detail else m.name
         reminder = reminders_store.add(
             kind='medication', title=m.name, proposed_text=proposed,
             start=start, rrule=rrule)
         med_store.add(
             name=m.name, generic=m.generic, region=m.region, dosage=m.dosage,
-            frequency=m.frequency, tenure=m.tenure, start_date=start_date,
-            source_doc_id=req.doc_id, reminder_id=reminder['id'])
+            frequency=m.frequency, tenure=m.tenure, timing=m.timing,
+            start_date=start_date, source_doc_id=req.doc_id,
+            reminder_id=reminder['id'])
         created.append(reminder)
     log.info('medications: saved %d, drafted %d reminder(s)',
              len(req.medications), len(created))

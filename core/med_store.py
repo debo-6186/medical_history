@@ -30,7 +30,7 @@ from core.config import MED_STORE_DB_PATH
 
 _COLUMNS = (
     'id', 'name', 'generic', 'region', 'dosage', 'frequency', 'tenure',
-    'start_date', 'source_doc_id', 'reminder_id', 'created_at',
+    'timing', 'start_date', 'source_doc_id', 'reminder_id', 'created_at',
 )
 
 _UNIT_DAYS = {'day': 1, 'week': 7, 'month': 30, 'year': 365}
@@ -53,12 +53,17 @@ def _connect() -> sqlite3.Connection:
                dosage        TEXT,
                frequency     TEXT,
                tenure        TEXT,
+               timing        TEXT,
                start_date    TEXT,
                source_doc_id TEXT,
                reminder_id   INTEGER,
                created_at    TEXT NOT NULL
            )'''
     )
+    # Migrate DBs created before the timing column existed.
+    cols = {row[1] for row in conn.execute('PRAGMA table_info(medications)')}
+    if 'timing' not in cols:
+        conn.execute('ALTER TABLE medications ADD COLUMN timing TEXT')
     return conn
 
 
@@ -67,16 +72,17 @@ def _row(row: sqlite3.Row) -> dict:
 
 
 def add(name: str, *, generic: str = '', region: str = '', dosage: str = '',
-        frequency: str = '', tenure: str = '', start_date: str | None = None,
-        source_doc_id: str | None = None, reminder_id: int | None = None) -> dict:
+        frequency: str = '', tenure: str = '', timing: str = '',
+        start_date: str | None = None, source_doc_id: str | None = None,
+        reminder_id: int | None = None) -> dict:
     with _connect() as conn:
         cur = conn.execute(
             '''INSERT INTO medications
-               (name, generic, region, dosage, frequency, tenure, start_date,
-                source_doc_id, reminder_id, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?)''',
-            (name, generic, region, dosage, frequency, tenure, start_date,
-             source_doc_id, reminder_id, _now()),
+               (name, generic, region, dosage, frequency, tenure, timing,
+                start_date, source_doc_id, reminder_id, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
+            (name, generic, region, dosage, frequency, tenure, timing,
+             start_date, source_doc_id, reminder_id, _now()),
         )
         row = conn.execute('SELECT * FROM medications WHERE id = ?',
                            (cur.lastrowid,)).fetchone()
