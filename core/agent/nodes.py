@@ -13,7 +13,8 @@ import ollama
 from core.agent.router import classify_intent
 from core.agent.state import AgentState
 from core.config import CHAT_MODEL, CHAT_NUM_CTX, MODEL_KEEP_ALIVE
-from core import vector_store
+from core import reminders, vector_store
+from core.calendar import build_rrule
 from core.qa import (
     build_messages,
     expand_query,
@@ -71,6 +72,31 @@ REFORMULATE_PROMPT = (
     '{"terms": ["...", "..."]}. Do not answer the question or invent values.'
 )
 
+SCHEDULE_EXTRACT_PROMPT = (
+    'The user wants to set a reminder. Extract its details and reply with ONLY '
+    'a JSON object:\n'
+    '  {"title": "<short reminder text>",\n'
+    '   "datetime": "<YYYY-MM-DDTHH:MM:SS or empty>",\n'
+    '   "frequency": "once|daily|twice daily|weekly|monthly|yearly",\n'
+    '   "count": <integer>}\n\n'
+    'count — set this ONLY when the user gives an explicit limit or duration '
+    '(e.g. "for 7 days" -> 7, "3 times" -> 3). For an ongoing / open-ended / '
+    '"every day" reminder with no stated end, use 0. A one-off ("once") is 0.\n'
+    'Resolve relative times against the given "Today" (e.g. "tonight at 9" -> '
+    'today 21:00:00; "in 6 months" -> the same day six months on at 09:00:00). '
+    'If no time is given, leave "datetime" empty. Keep "title" concise and free '
+    'of dosage details. Do not add anything outside the JSON object.'
+)
+
+SCHEDULE_SYSTEM_PROMPT = (
+    'You are a scheduling assistant. A reminder DRAFT has just been created from '
+    'the user\'s request (its details are in the user message). In 1–2 short '
+    'sentences, confirm what was drafted — what, when, and how often — and tell '
+    'the user to review and confirm it in their Reminders panel before it is '
+    'added to their calendar. Do NOT claim it is already scheduled. End by '
+    'noting they can edit the time or wording when confirming.'
+)
+
 
 def _assemble(system_prompt: str, question: str, history: list[dict],
               context: str | None = None) -> tuple[list[dict], str]:
@@ -113,6 +139,40 @@ def _reformulate_terms(question: str, prev_terms: str) -> list[str]:
         return [str(t).strip() for t in data.get('terms', []) if str(t).strip()]
     except Exception:  # noqa: BLE001 - degrade to no reformulation
         return []
+
+
+def _extract_reminder(question: str) -> dict:
+    """Parse a reminder request into {title, datetime, frequency, count}.
+
+    Degrades to a title-only draft (the user fills in the time when confirming)
+    on any model/parse failure.
+    """
+    today = date.today().isoformat()
+    try:
+        response = ollama.chat(
+            model=CHAT_MODEL,
+            messages=[
+                {'role': 'system', 'content': SCHEDULE_EXTRACT_PROMPT},
+                {'role': 'user', 'content': f'Today is {today}.\n{question}'},
+            ],
+            think=False,
+            format='json',
+            keep_alive=MODEL_KEEP_ALIVE,
+            options={'num_ctx': CHAT_NUM_CTX, 'temperature': 0.0,
+                     'num_predict': 128},
+        )
+        data = json.loads(response['message']['content'])
+    except Exception:  # noqa: BLE001
+        data = {}
+    title = str(data.get('title') or question).strip()
+    dt = str(data.get('datetime') or '').strip() or None
+    frequency = str(data.get('frequency') or 'once').strip().lower()
+    try:
+        count = int(data.get('count') or 0)
+    except (TypeError, ValueError):
+        count = 0
+    return {'title': title, 'datetime': dt, 'frequency': frequency,
+            'count': count}
 
 
 # --- Nodes -----------------------------------------------------------------
@@ -187,16 +247,52 @@ def mixed_node(state: AgentState) -> dict:
             'sources': sources_from_hits(hits)}
 
 
+def scheduling_node(state: AgentState) -> dict:
+    """Draft a reminder from the user's request and persist it as *pending*.
+
+    Nothing is sent to Google here — the draft is stored locally and surfaced as
+    a `proposal` for the user to review/edit/confirm. The model then writes a
+    short confirmation. The stored user_msg is the original question so the
+    conversation history stays coherent.
+    """
+    question = state['question']
+    parsed = _extract_reminder(question)
+    rrule = build_rrule(parsed['frequency'], parsed['count'])
+    reminder = reminders.add(
+        kind='manual',
+        title=parsed['title'],
+        proposed_text=parsed['title'],
+        start=parsed['datetime'],
+        rrule=rrule,
+    )
+
+    today = date.today().isoformat()
+    draft = (
+        f"Draft reminder — text: {parsed['title']}; "
+        f"when: {parsed['datetime'] or 'not specified'}; "
+        f"repeat: {parsed['frequency']}."
+    )
+    messages = [
+        {'role': 'system',
+         'content': f'Today is {today}.\n\n{SCHEDULE_SYSTEM_PROMPT}'},
+        *state.get('history', []),
+        {'role': 'user', 'content': f'{draft}\n\nUser request: {question}'},
+    ]
+    return {'messages': messages, 'user_msg': question, 'sources': [],
+            'proposal': reminder}
+
+
 # --- Conditional edge functions --------------------------------------------
 
 def route_by_intent(state: AgentState) -> str:
-    """Map the router's intent to a branch. schedule/clarify fall through to
-    records in this PR (the scheduling branch is roadmap)."""
+    """Map the router's intent to a branch. clarify falls through to records."""
     intent = state.get('intent', 'records')
     if intent == 'general':
         return 'general'
     if intent == 'mixed':
         return 'mixed'
+    if intent == 'schedule':
+        return 'schedule'
     return 'records'
 
 

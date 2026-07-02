@@ -24,8 +24,21 @@
   <section id="chat-screen" class="screen" hidden>
     <header class="topbar">
       <span class="title">Medical History</span>
+      <button id="reminders-btn" class="link-btn" title="Reminders">
+        🔔<span id="reminders-badge" class="badge" hidden>0</span>
+      </button>
       <button id="logout-btn" class="link-btn">Lock</button>
     </header>
+
+    <!-- Reminders review panel (slide-over) -->
+    <div id="reminders-panel" class="panel" hidden>
+      <div class="panel-head">
+        <span class="panel-title">Reminders to review</span>
+        <button id="reminders-close" class="link-btn">✕</button>
+      </div>
+      <div id="google-status" class="google-status"></div>
+      <div id="reminders-list" class="reminders-list"></div>
+    </div>
 
     <div id="health-banner" class="banner" hidden>
       Backend can't reach Ollama — analysis and chat will fail until it's running.

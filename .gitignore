@@ -8,3 +8,11 @@ models/
 prescriptions/
 reports/
 .DS_Store
+
+# Google OAuth secrets / token and the local reminders DB (never commit)
+google_credentials.json
+google_token.json
+*reminders.db
+
+# Local export of personal medical chunks (PII) — keep out of git
+chunks_export.json

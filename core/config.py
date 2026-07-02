@@ -50,6 +50,26 @@ WHISPER_COMPUTE_TYPE = os.getenv('WHISPER_COMPUTE_TYPE', 'int8')
 DB_PATH = os.getenv('DB_PATH', './rag_db')
 SOURCE_FILES_DIR = Path(DB_PATH) / 'source_files'
 
+# --- Reminders / Google Calendar -------------------------------------------
+# Reminders are drafted and persisted locally (sqlite) and only pushed to
+# Google Calendar after the user confirms. Drafting needs no Google auth; only
+# the confirm -> create step does, so the feature works offline until then.
+REMINDERS_DB_PATH = os.getenv('REMINDERS_DB_PATH', str(Path(DB_PATH) / 'reminders.db'))
+
+# OAuth client secrets ("Desktop app" credentials downloaded from Google Cloud
+# Console) and the stored user token (written after the one-time consent). Both
+# live under rag_db/ by default and must never be committed.
+GOOGLE_CREDENTIALS_PATH = os.getenv(
+    'GOOGLE_CREDENTIALS_PATH', str(Path(DB_PATH) / 'google_credentials.json'))
+GOOGLE_TOKEN_PATH = os.getenv(
+    'GOOGLE_TOKEN_PATH', str(Path(DB_PATH) / 'google_token.json'))
+GOOGLE_CALENDAR_ID = os.getenv('GOOGLE_CALENDAR_ID', 'primary')
+
+# Privacy: a medication reminder's title is truncated to this many leading
+# characters before it is sent to Google (TECH_SPEC privacy boundary). Follow-up
+# and manual reminders send the user-approved text as-is.
+MED_TITLE_PREFIX_LEN = int(os.getenv('MED_TITLE_PREFIX_LEN', '4'))
+
 # --- Vector store (ObjectBox) ----------------------------------------------
 # The vector store lives in its own directory (data.mdb) so the whole store can
 # be copied to Android and opened by the native ObjectBox binding. The distance

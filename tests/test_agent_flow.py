@@ -117,6 +117,31 @@ def test_general_intent_has_no_retrieval_or_sources(monkeypatch):
     assert state['messages'][-1]['content'] == 'what does high crp mean'
 
 
+def test_schedule_intent_drafts_pending_proposal(monkeypatch, tmp_path):
+    import core.reminders as reminders
+    monkeypatch.setattr(reminders, 'REMINDERS_DB_PATH', str(tmp_path / 'r.db'))
+    monkeypatch.setattr(nodes, 'classify_intent', lambda q, h=None: 'schedule')
+    monkeypatch.setattr(nodes, '_extract_reminder', lambda q: {
+        'title': 'Take BP medicine', 'datetime': '2026-07-01T21:00:00',
+        'frequency': 'daily', 'count': 0})
+
+    def fail_retrieve(*a, **k):
+        raise AssertionError('schedule branch must not retrieve')
+
+    monkeypatch.setattr(nodes, 'retrieve', fail_retrieve)
+
+    state = _run('remind me to take my bp medicine at 9pm')
+    assert state['intent'] == 'schedule'
+    assert state['sources'] == []
+    p = state['proposal']
+    assert p['title'] == 'Take BP medicine'
+    assert p['status'] == 'pending'          # drafted, not yet sent to Google
+    assert p['rrule'] == 'RRULE:FREQ=DAILY'
+    assert p['start'] == '2026-07-01T21:00:00'
+    # the draft is persisted and listable for confirmation
+    assert reminders.list_reminders('pending')[0]['id'] == p['id']
+
+
 def test_mixed_intent_retrieves_once_and_keeps_sources(monkeypatch):
     monkeypatch.setattr(nodes, 'classify_intent', lambda q, h=None: 'mixed')
     monkeypatch.setattr(nodes, 'expand_query',

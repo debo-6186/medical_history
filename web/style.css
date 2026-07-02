@@ -80,6 +80,47 @@ html, body {
 .msg.user .sources { border-color: rgba(255,255,255,.3); color: #dbeafe; }
 .source-link { color: var(--accent); text-decoration: underline; cursor: pointer; }
 
+/* --- rich answer (Markdown + charts) --- */
+.text.rich { white-space: normal; display: block; }
+.text.rich p { margin: 0 0 8px; }
+.text.rich p:last-child { margin-bottom: 0; }
+.text.rich h3, .text.rich h4, .text.rich h5, .text.rich h6 {
+  font-size: 15px; margin: 10px 0 6px; font-weight: 600;
+}
+.text.rich ul, .text.rich ol { margin: 0 0 8px; padding-left: 20px; }
+.text.rich li { margin: 2px 0; }
+.text.rich code {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+  padding: 0 4px; font-size: 13px;
+}
+.md-table-wrap { overflow-x: auto; margin: 8px 0; }
+.md-table { border-collapse: collapse; font-size: 13px; width: 100%; }
+.md-table th, .md-table td {
+  border: 1px solid var(--border); padding: 5px 9px; text-align: left;
+  white-space: nowrap;
+}
+.md-table th { background: var(--bg); font-weight: 600; }
+.md-table td.oor { color: var(--error); font-weight: 700; }
+
+/* charts */
+.chart-fig { margin: 10px 0 4px; max-width: 420px; }
+.chart { display: block; background: var(--panel); }
+.chart-fig figcaption { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.ct-title { font-size: 12px; font-weight: 600; fill: var(--ink); }
+.ct-band { fill: rgba(34,197,94,.12); }
+.ct-grid { stroke: var(--border); stroke-width: 1; }
+.ct-axis-line { stroke: var(--muted); stroke-width: 1; }
+.ct-axis { font-size: 9px; fill: var(--muted); text-anchor: middle; }
+.ct-axis-y { text-anchor: end; }
+.ct-line { fill: none; stroke: var(--accent); stroke-width: 2;
+  stroke-linejoin: round; stroke-linecap: round; }
+.ct-dot { fill: var(--accent); }
+.ct-dot.oor { fill: var(--error); }
+.ct-bar { fill: var(--accent); }
+.ct-bar.oor { fill: var(--error); }
+.ct-val { font-size: 9px; fill: var(--ink); text-anchor: middle; font-weight: 600; }
+.ct-val.oor { fill: var(--error); }
+
 /* --- Composer --- */
 .composer {
   flex: 0 0 auto; background: var(--panel);
@@ -135,3 +176,58 @@ html, body {
   background: var(--accent); color: #fff; font-weight: 600;
 }
 .intent-toggle.disabled { opacity: .5; pointer-events: none; }
+
+/* --- reminders ----------------------------------------------------------- */
+.topbar .title { flex: 1; }                 /* push bell + Lock to the right */
+#reminders-btn { position: relative; font-size: 18px; }
+.badge {
+  position: absolute; top: -4px; right: -6px; min-width: 16px; height: 16px;
+  padding: 0 4px; border-radius: 8px; background: var(--error); color: #fff;
+  font-size: 11px; line-height: 16px; text-align: center; font-weight: 700;
+}
+
+.msg.reminder-note { background: #eff6ff; color: #1e3a8a; font-size: 13px; }
+
+/* slide-over panel */
+.panel {
+  position: fixed; inset: 0; z-index: 20; background: var(--bg);
+  display: flex; flex-direction: column;
+}
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px; background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.panel-title { font-weight: 600; }
+.google-status {
+  padding: 10px 16px; font-size: 13px; color: var(--muted);
+  background: var(--panel); border-bottom: 1px solid var(--border);
+}
+.google-status code { background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+.gs-ok { color: #047857; font-weight: 600; }
+
+.reminders-list { flex: 1; overflow-y: auto; padding: 14px 16px; }
+.reminder-card {
+  display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;
+  padding: 12px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 12px;
+}
+.reminder-kind {
+  align-self: flex-start; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .04em; padding: 2px 8px; border-radius: 999px;
+  background: #e0e7ff; color: #3730a3;
+}
+.reminder-kind.medication { background: #dcfce7; color: #166534; }
+.reminder-kind.followup { background: #fef3c7; color: #92400e; }
+.reminder-text, .reminder-when {
+  width: 100%; padding: 9px 10px; font-size: 14px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
+}
+.reminder-rep { font-size: 12px; color: var(--muted); }
+.reminder-actions { display: flex; gap: 8px; }
+.mini-btn {
+  padding: 7px 14px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel); color: var(--ink); font-size: 13px; cursor: pointer;
+}
+.mini-btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.mini-btn:disabled { opacity: .6; cursor: default; }

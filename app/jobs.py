@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from core.analysis import analyze_extracted, extract_file
+from core.followups import create_pending_followups
 from core.rag import ingest_analysis, store_source_file
 
 # Held around every gemma4 / qwen3-vl call (ingest worker + chat route).
@@ -83,6 +84,16 @@ def _process(job: Job) -> None:
         text = extract_file(src)
         _update(job, progress='Analyzing with the local model…')
         analysis = analyze_extracted(job.filename, text, job.doc_type)
+        # Draft reminders for any follow-up action in the document (e.g.
+        # "repeat HRCT in 6 months"). Still under the lock (a model call);
+        # never let it fail the ingest.
+        try:
+            followups = create_pending_followups(analysis)
+        except Exception:  # noqa: BLE001
+            followups = []
+            log.exception('job %s: follow-up extraction failed', job.job_id)
+    if followups:
+        _update(job, progress=f'Detected {len(followups)} follow-up(s) to review')
 
     _update(job, progress='Embedding & storing…')
     chunks = ingest_analysis(

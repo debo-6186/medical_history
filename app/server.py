@@ -25,6 +25,7 @@ from app.schemas import (
     HistoryResponse,
     LoginRequest,
     LoginResponse,
+    ReminderConfirmRequest,
 )
 from core.analysis import SUPPORTED_EXTENSIONS
 from core.config import (
@@ -33,7 +34,10 @@ from core.config import (
     MAX_UPLOAD_MB,
     SOURCE_FILES_DIR,
 )
+from core import calendar as gcal
+from core import reminders as reminders_store
 from core.agent import run_turn
+from core.followups import create_pending_followups
 from core.qa import stream_answer
 from core.rag import delete_document, ingest_raw_text, list_documents
 from core.transcribe import transcribe
@@ -95,7 +99,19 @@ def history_route(
     dated_text = f"Medical history entry — {now.strftime('%Y-%m-%d')}\n\n{text}"
     chunks = ingest_raw_text(doc_id, 'Medical history', dated_text, 'history')
     log.info('history: stored %s (%d chunk(s))', doc_id, chunks)
-    return HistoryResponse(doc_id=doc_id, chunks=chunks)
+
+    # Scan the saved text for future follow-up actions and draft them as pending
+    # reminders. The model call must run under MODEL_LOCK; extraction failure
+    # must never fail the save itself.
+    drafted: list[dict] = []
+    with MODEL_LOCK:
+        try:
+            drafted = create_pending_followups(text)
+        except Exception:  # noqa: BLE001
+            log.exception('history: follow-up extraction failed')
+    if drafted:
+        log.info('history: drafted %d follow-up reminder(s)', len(drafted))
+    return HistoryResponse(doc_id=doc_id, chunks=chunks, reminders=drafted)
 
 
 @app.post('/api/transcribe')
@@ -266,6 +282,11 @@ async def chat(req: ChatRequest, _token: str = Depends(require_auth)) -> Streami
 
             yield _sse('sources', {'sources': sources})
 
+            # A scheduling turn drafted a reminder — surface it for the user to
+            # review and confirm (nothing has been sent to Google yet).
+            if state.get('proposal'):
+                yield _sse('proposal', {'reminder': state['proposal']})
+
             conv = CONVERSATIONS.setdefault(conversation_id, [])
             conv.append({'role': 'user', 'content': user_msg})
             conv.append({'role': 'assistant', 'content': answer})
@@ -312,6 +333,98 @@ def remove_document(doc_id: str, _token: str = Depends(require_auth)) -> dict:
     if not delete_document(doc_id):
         raise HTTPException(404, 'Document not found')
     return {'deleted': True}
+
+
+# --- Reminders -------------------------------------------------------------
+# Reminders are drafted locally (by the chat scheduling node, and later by
+# medication capture / follow-up extraction) and only pushed to Google Calendar
+# when the user confirms one here.
+
+@app.get('/api/reminders')
+def list_reminders(
+    status: str | None = None, _token: str = Depends(require_auth),
+) -> dict:
+    return {'reminders': reminders_store.list_reminders(status)}
+
+
+@app.post('/api/reminders/{reminder_id}/confirm')
+async def confirm_reminder(
+    reminder_id: int,
+    req: ReminderConfirmRequest,
+    _token: str = Depends(require_auth),
+) -> dict:
+    reminder = reminders_store.get(reminder_id)
+    if reminder is None:
+        raise HTTPException(404, 'Reminder not found')
+    if reminder['status'] == 'scheduled':
+        raise HTTPException(409, 'Reminder is already scheduled')
+
+    # Apply any edits the user made in the confirmation panel.
+    edits = req.model_dump(exclude_none=True, exclude={'timezone'})
+    if edits:
+        reminder = reminders_store.update_fields(reminder_id, **edits)
+
+    if not reminder['start']:
+        raise HTTPException(422, 'Set a date/time before confirming')
+    try:
+        start_dt = datetime.fromisoformat(reminder['start'])
+    except ValueError:
+        raise HTTPException(422, f"Invalid start datetime: {reminder['start']!r}")
+
+    # Medication reminders send only the truncated medicine name (privacy);
+    # manual/follow-up reminders send the user-approved text.
+    title = (reminder['title'] if reminder['kind'] == 'medication'
+             else reminder['proposed_text'])
+    try:
+        event_id = await asyncio.to_thread(
+            gcal.create_reminder,
+            title, start_dt, reminder['rrule'], reminder['kind'], req.timezone,
+        )
+    except gcal.NotAuthorizedError as exc:
+        raise HTTPException(409, str(exc))
+    except Exception as exc:  # noqa: BLE001 - surface Google API errors
+        log.exception('reminder confirm: Google Calendar insert failed')
+        raise HTTPException(502, f'Google Calendar error: {exc}')
+
+    updated = reminders_store.mark_scheduled(reminder_id, event_id)
+    log.info('reminder %s scheduled as event %s', reminder_id, event_id)
+    return {'reminder': updated}
+
+
+@app.post('/api/reminders/{reminder_id}/dismiss')
+def dismiss_reminder(
+    reminder_id: int, _token: str = Depends(require_auth),
+) -> dict:
+    reminder = reminders_store.get(reminder_id)
+    if reminder is None:
+        raise HTTPException(404, 'Reminder not found')
+    return {'reminder': reminders_store.mark_dismissed(reminder_id)}
+
+
+# --- Google Calendar connection -------------------------------------------
+
+@app.get('/api/google/status')
+def google_status(_token: str = Depends(require_auth)) -> dict:
+    from pathlib import Path as _Path
+
+    from core.config import GOOGLE_CREDENTIALS_PATH
+    return {
+        'authorized': gcal.is_authorized(),
+        'credentials_present': _Path(GOOGLE_CREDENTIALS_PATH).exists(),
+    }
+
+
+@app.post('/api/google/authorize')
+async def google_authorize(_token: str = Depends(require_auth)) -> dict:
+    """Run the one-time OAuth consent (opens a browser on the laptop)."""
+    try:
+        await asyncio.to_thread(gcal.authorize)
+    except FileNotFoundError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        log.exception('google authorize failed')
+        raise HTTPException(500, f'Authorization failed: {exc}')
+    return {'authorized': True}
 
 
 # --- Static frontend (mounted last so /api/* routes take precedence) -------
